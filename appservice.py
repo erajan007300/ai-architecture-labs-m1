@@ -1,5 +1,6 @@
 import json
 import queue
+import socket
 import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -143,11 +144,28 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+def find_available_port(start_port=8001, max_port=8010):
+    """Find the first available port starting from start_port"""
+    for port in range(start_port, max_port + 1):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(("127.0.0.1", port))
+            sock.close()
+            return port
+        except OSError:
+            # Port is in use, try next one
+            continue
+    raise RuntimeError(f"No available ports found between {start_port} and {max_port}")
+
+
 def main():
+    # Auto-detect the port to use
+    port = find_available_port()
+    
     t = threading.Thread(target=worker, daemon=True)
     t.start()
-    server = HTTPServer(("127.0.0.1", 8000), Handler)
-    print("App service running on http://127.0.0.1:8000")
+    server = HTTPServer(("127.0.0.1", port), Handler)
+    print(f"App service running on http://127.0.0.1:{port}")
     server.serve_forever()
 
 
