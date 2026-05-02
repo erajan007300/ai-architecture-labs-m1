@@ -1,0 +1,47 @@
+[
+  {
+    "pID": 1,
+    "Name": "Surface 13\"",
+    "Seller": "Microsoft",
+    "Price": 1000,
+    "Country": "US",
+    "is_searchable": 1,
+    "OnHand": 0
+  },
+  {
+    "pID": 2,
+    "Name": "Surface 10\"",
+    "Seller": "Microsoft",
+    "Price": 1200,
+    "Country": "US",
+    "is_searchable": 0,
+    "OnHand": 5
+  },
+  {
+    "pID": 3,
+    "Name": "Surface 12\"",
+    "Seller": "Amazon",
+    "Price": 1000,
+    "Country": "US",
+    "is_searchable": 1,
+    "OnHand": 47
+  },
+  {
+    "pID": 4,
+    "Name": "Xbox Controller",
+    "Seller": "Walmart",
+    "Price": 50,
+    "Country": "UK",
+    "is_searchable": 1,
+    "OnHand": 5
+  },
+  {
+    "pID": 5,
+    "Name": "Xbox Controller Small",
+    "Seller": "Newegg",
+    "Price": 50,
+    "Country": "ES",
+    "is_searchable": 1,
+    "OnHand": 148
+  }
+]
