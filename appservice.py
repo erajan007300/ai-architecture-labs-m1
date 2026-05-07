@@ -21,14 +21,14 @@ def worker():
         cache_key = (region, pid)
         with _lock:
             if cache_key in CACHE:
-                result = CACHE[cache_key]
+                result, catalog_source = CACHE[cache_key]
                 cache_status = "HIT"
             else:
-                result = product_id(pid, region)
-                CACHE[cache_key] = result
+                result, catalog_source = product_id(pid, region)
+                CACHE[cache_key] = (result, catalog_source)
                 cache_status = "MISS"
         with _lock:
-            RESPONSE_MAP[req_id] = (result, cache_status)
+            RESPONSE_MAP[req_id] = (result, cache_status, catalog_source)
             RESPONSE_EVENTS[req_id].set()
         REQUEST_QUEUE.task_done()
 
@@ -67,7 +67,7 @@ class Handler(BaseHTTPRequestHandler):
         event.wait()
 
         with _lock:
-            result, cache_status = RESPONSE_MAP.pop(req_id)
+            result, cache_status, catalog_source = RESPONSE_MAP.pop(req_id)
             del RESPONSE_EVENTS[req_id]
 
         handled_by_port = self.server.server_address[1]
@@ -78,11 +78,13 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({
                 "error": f"Product {pid} not found",
                 "cache_status": cache_status,
+                "catalog_source": catalog_source,
                 "handled_by_port": handled_by_port
             }).encode())
         else:
             response = dict(result)
             response["cache_status"] = cache_status
+            response["catalog_source"] = catalog_source
             response["handled_by_port"] = handled_by_port
             onhand = response.get("OnHand")
             if onhand == "ERROR":
