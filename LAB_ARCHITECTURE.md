@@ -18,9 +18,10 @@ It is designed to teach distributed systems concepts: caching strategies, concur
 
 | File | Role | Key Responsibility |
 |------|------|-------------------|
-| **appservice.py** | HTTP Server | Main entry point. Runs ThreadPoolExecutor-style worker with request queue. Handles GET /product/{pid} and POST /place_order endpoints. Maintains in-memory cache and enriches inventory responses. |
-| **pidlookup_fn.py** | Data Access (Read) | Simulates database lookup. Returns product record by pID or None. Injects 100ms artificial latency via `time.sleep(0.1)`. Loads catalog_us.json once at module init. |
+| **appservice.py** | HTTP Server | Main entry point. Runs ThreadPoolExecutor-style worker with request queue. Handles GET /product/{pid}, POST /place_order, and POST /clear_cache endpoints. Maintains in-memory cache and enriches inventory responses. |
+| **pidlookup_fn.py** | Data Access (Read) | Simulates database lookup. Returns product record by pID and region or None. Injects 100ms artificial latency via `time.sleep(0.1)`. Loads catalog_us.json or catalog_eu.json for each lookup. |
 | **place_order_fn.py** | Data Access (Write) | Reduces OnHand inventory by qty. Supports region parameter to select catalog file (us/eu). Writes updated catalog back to JSON file. Handles non-numeric OnHand as error case. |
+| **replication_sync.py** | Replication Utility | Copies OnHand values from catalog_us.json to catalog_eu.json for matching pID values. No conflict resolution. |
 | **clientsimulator.py** | Test Client | Interactive CLI. Two workflows: (1) sequential product lookups with timing, (2) single order placement. Appends results to testoutput file. |
 | **simulation_config.py** | Configuration | Defines environment toggles: `PARTITION_ERROR` (unused), `INV_FAIL=True` (unused—intended to trigger inventory failures). |
 | **catalog_us.json** | Data Store | JSON array of 5 products (pID 1-5). US region catalog. Persistent storage for inventory state. |
@@ -32,23 +33,24 @@ It is designed to teach distributed systems concepts: caching strategies, concur
 
 ## 3. Request / Data Flow
 
-### Product Lookup Flow (GET /product/{pid})
+### Product Lookup Flow (GET /product/{pid}?region={us|eu})
 ```
 ClientSimulator
     ↓
-GET /product/{pid}
+GET /product/{pid}?region={us|eu}
     ↓
 appservice.do_GET()
     ├─ Parse {pid} from URL
+    ├─ Parse region query parameter (defaults to us)
     ├─ Create request ID and event
-    ├─ Enqueue (req_id, pid) to REQUEST_QUEUE
+    ├─ Enqueue (req_id, pid, region) to REQUEST_QUEUE
     ├─ Wait on event (blocks request thread)
     ↓
 worker thread (background)
-    ├─ Dequeue (req_id, pid)
-    ├─ Check CACHE[pid]
+    ├─ Dequeue (req_id, pid, region)
+    ├─ Check CACHE[(region, pid)]
     │  ├─ If hit: use cached result
-    │  └─ If miss: call product_id(pid) → 100ms sleep + catalog lookup
+    │  └─ If miss: call product_id(pid, region) → 100ms sleep + catalog lookup
     ├─ Store result in RESPONSE_MAP[req_id]
     ├─ Signal event
     ↓
@@ -88,18 +90,47 @@ ClientSimulator
     └─ Print completion message
 ```
 
+### Cache Clear Flow (POST /clear_cache)
+```
+Client/Admin
+    ↓
+POST /clear_cache
+    ↓
+appservice.do_POST()
+    ├─ Clear all entries from CACHE under lock
+    ├─ Return JSON 200 {status: "cache_cleared", entries_cleared: <count>}
+```
+
+### Replication Sync Flow (python3 replication_sync.py)
+```
+Operator
+    ↓
+python3 replication_sync.py
+    ↓
+replication_sync.sync_onhand_us_to_eu()
+    ├─ Load catalog_us.json and catalog_eu.json
+    ├─ Match products by pID
+    ├─ Copy each matching US OnHand value into the EU product record
+    ├─ Write updated catalog_eu.json
+    ├─ Return {status: "synced", source, target, products_updated}
+```
+
 ---
 
 ## 4. Current Capabilities
 
 1. **Product Lookup with Caching**
    - First request for a product ID incurs 100ms latency
-   - Subsequent requests served instantly from CACHE
+   - `GET /product/{pid}?region=us` reads from catalog_us.json
+   - `GET /product/{pid}?region=eu` reads from catalog_eu.json
+   - Requests without a region default to the US catalog
+   - Subsequent requests served instantly from CACHE for the same region and product ID
+   - `POST /clear_cache` clears all cached product lookup entries
    - Cache is per-appservice instance (no TTL, no eviction)
 
 2. **Inventory Status Computation**
    - OnHand > 0 → inventory_status = "InStock", purchase_allowed = True
-   - OnHand = 0 → inventory_status = "OutofStock", purchase_allowed = True
+   - OnHand = 0 → inventory_status = "OutofStock", purchase_allowed = False
    - OnHand = "ERROR" → inventory_status = "Inventory Unavailable", purchase_allowed = False + user message
    - OnHand < 0 → purchase_allowed = True (negative inventory allowed)
 
@@ -107,11 +138,16 @@ ClientSimulator
    - Route orders to US or EU catalog independently
    - Inventory reduced immediately and persisted to JSON file
 
-4. **Concurrent Request Handling**
+4. **One-Way Inventory Replication**
+   - `python3 replication_sync.py` copies OnHand values from catalog_us.json to catalog_eu.json for matching pID values
+   - EU product metadata remains unchanged; only OnHand is overwritten
+   - No conflict resolution, merge policy, or order placement changes
+
+5. **Concurrent Request Handling**
    - Worker thread processes product lookups asynchronously
    - Multiple GET requests can queue and are served sequentially by single worker
 
-5. **Result Logging**
+6. **Result Logging**
    - All operations (product fetch, order place) logged to testoutput with timestamp
    - JSON format for programmatic analysis
 
@@ -184,7 +220,7 @@ These flags are placeholders for future enhancement—configuration is parsed bu
 1. **Database Latency**: 100ms artificial sleep in pidlookup_fn before each cache miss
 2. **Inventory Depletion**: OnHand decremented by order qty; can go negative (overselling)
 3. **System Failure Mode**: OnHand = "ERROR" string triggers inventory unavailability response
-4. **Multi-Tenant Isolation**: US and EU catalogs maintained separately; orders routed by region
+4. **Multi-Tenant Isolation**: US and EU catalogs maintained separately; product lookups and orders routed by region
 5. **Eventual Consistency**: Order writes sync to disk immediately (no staged commits)
 6. **Client-Side Timing**: clientsimulator records elapsed time for request batches
 7. **Request Queuing**: Multiple concurrent GET requests queue and serialize through worker thread
@@ -243,7 +279,7 @@ These flags are placeholders for future enhancement—configuration is parsed bu
 
 6. **Replication**
    - Replicate orders to audit log (separate file or database)
-   - Sync catalogs across regions with conflict resolution
+   - Extend the one-way OnHand sync with conflict resolution
    - Demonstrate eventual consistency
 
 7. **Load Balancing**

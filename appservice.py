@@ -4,6 +4,7 @@ import socket
 import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import parse_qs, urlparse
 from pidlookup_fn import product_id
 from place_order_fn import place_order
 
@@ -16,22 +17,26 @@ _lock = threading.Lock()
 
 def worker():
     while True:
-        req_id, pid = REQUEST_QUEUE.get()
+        req_id, pid, region = REQUEST_QUEUE.get()
+        cache_key = (region, pid)
         with _lock:
-            if pid in CACHE:
-                result = CACHE[pid]
+            if cache_key in CACHE:
+                result = CACHE[cache_key]
+                cache_status = "HIT"
             else:
-                result = product_id(pid)
-                CACHE[pid] = result
+                result = product_id(pid, region)
+                CACHE[cache_key] = result
+                cache_status = "MISS"
         with _lock:
-            RESPONSE_MAP[req_id] = result
+            RESPONSE_MAP[req_id] = (result, cache_status)
             RESPONSE_EVENTS[req_id].set()
         REQUEST_QUEUE.task_done()
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        path = self.path
+        parsed_url = urlparse(self.path)
+        path = parsed_url.path
         if not path.startswith("/product/"):
             self.send_response(404)
             self.end_headers()
@@ -46,25 +51,39 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"error": "Invalid product ID"}).encode())
             return
+        region = parse_qs(parsed_url.query).get("region", ["us"])[0].lower()
+        if region not in ("us", "eu"):
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Invalid region"}).encode())
+            return
 
         req_id = id(self)
         event = threading.Event()
         with _lock:
             RESPONSE_EVENTS[req_id] = event
 
-        REQUEST_QUEUE.put((req_id, pid))
+        REQUEST_QUEUE.put((req_id, pid, region))
         event.wait()
 
         with _lock:
-            result = RESPONSE_MAP.pop(req_id)
+            result, cache_status = RESPONSE_MAP.pop(req_id)
             del RESPONSE_EVENTS[req_id]
+
+        handled_by_port = self.server.server_address[1]
 
         if result is None:
             self.send_response(404)
             self.end_headers()
-            self.wfile.write(json.dumps({"error": f"Product {pid} not found"}).encode())
+            self.wfile.write(json.dumps({
+                "error": f"Product {pid} not found",
+                "cache_status": cache_status,
+                "handled_by_port": handled_by_port
+            }).encode())
         else:
             response = dict(result)
+            response["cache_status"] = cache_status
+            response["handled_by_port"] = handled_by_port
             onhand = response.get("OnHand")
             if onhand == "ERROR":
                 response["inventory_status"] = "Inventory Unavailable"
@@ -75,7 +94,7 @@ class Handler(BaseHTTPRequestHandler):
                 response["purchase_allowed"] = True
             elif onhand == 0:
                 response["inventory_status"] = "OutofStock"
-                response["purchase_allowed"] = True
+                response["purchase_allowed"] = False
             else:
                 response["inventory_status"] = onhand
                 response["purchase_allowed"] = True
@@ -86,6 +105,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path
+        if path == "/clear_cache":
+            with _lock:
+                entries_cleared = len(CACHE)
+                CACHE.clear()
+
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "cache_cleared",
+                "entries_cleared": entries_cleared
+            }).encode())
+            return
+
         if path != "/place_order":
             self.send_response(404)
             self.end_headers()

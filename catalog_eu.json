@@ -15,7 +15,7 @@
     "Price": 1200,
     "Country": "US",
     "is_searchable": 0,
-    "OnHand": 12
+    "OnHand": 5
   },
   {
     "pID": 3,
@@ -24,7 +24,7 @@
     "Price": 1000,
     "Country": "US",
     "is_searchable": 1,
-    "OnHand": 50
+    "OnHand": 47
   },
   {
     "pID": 4,
@@ -33,7 +33,7 @@
     "Price": 50,
     "Country": "UK",
     "is_searchable": 1,
-    "OnHand": 8
+    "OnHand": 5
   },
   {
     "pID": 5,
@@ -42,6 +42,6 @@
     "Price": 50,
     "Country": "ES",
     "is_searchable": 1,
-    "OnHand": 150
+    "OnHand": 148
   }
 ]
