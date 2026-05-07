@@ -22,22 +22,14 @@ def _write_catalog(path, catalog):
 
 def sync_catalog(source_path, target_path):
     source_catalog = _load_catalog(source_path)
-    target_catalog = _load_catalog(target_path)
-    source_product_by_pid = {product["pID"]: product for product in source_catalog}
-
-    updated_count = 0
-    for index, product in enumerate(target_catalog):
-        source_product = source_product_by_pid.get(product["pID"])
-        if source_product is not None:
-            target_catalog[index] = dict(source_product)
-            updated_count += 1
+    target_catalog = [dict(product) for product in source_catalog]
 
     _write_catalog(target_path, target_catalog)
     return {
         "status": "synced",
         "source": os.path.basename(source_path),
         "target": os.path.basename(target_path),
-        "products_updated": updated_count
+        "products_updated": len(target_catalog)
     }
 
 

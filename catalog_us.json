@@ -9,15 +9,6 @@
     "OnHand": 0
   },
   {
-    "pID": 2,
-    "Name": "Surface 10\"",
-    "Seller": "Microsoft",
-    "Price": 1200,
-    "Country": "US",
-    "is_searchable": 0,
-    "OnHand": 5
-  },
-  {
     "pID": 3,
     "Name": "Surface 12\"",
     "Seller": "Amazon",
@@ -27,15 +18,6 @@
     "OnHand": 47
   },
   {
-    "pID": 4,
-    "Name": "Xbox Controller",
-    "Seller": "Walmart",
-    "Price": 50,
-    "Country": "UK",
-    "is_searchable": 1,
-    "OnHand": 5
-  },
-  {
     "pID": 5,
     "Name": "Xbox Controller Small",
     "Seller": "Newegg",
@@ -43,5 +25,23 @@
     "Country": "ES",
     "is_searchable": 1,
     "OnHand": 148
+  },
+  {
+    "pID": 7,
+    "Name": "Xbox Wireless Headset",
+    "Seller": "Best Buy",
+    "Price": 100,
+    "Country": "US",
+    "is_searchable": 1,
+    "OnHand": 22
+  },
+  {
+    "pID": 9,
+    "Name": "USB-C Travel Hub",
+    "Seller": "Newegg",
+    "Price": 90,
+    "Country": "UK",
+    "is_searchable": 0,
+    "OnHand": 12
   }
 ]

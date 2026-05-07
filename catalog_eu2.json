@@ -1,5 +1,23 @@
 [
   {
+    "pID": 2,
+    "Name": "Surface 10\"",
+    "Seller": "Microsoft",
+    "Price": 1200,
+    "Country": "US",
+    "is_searchable": 0,
+    "OnHand": 5
+  },
+  {
+    "pID": 4,
+    "Name": "Xbox Controller",
+    "Seller": "Walmart",
+    "Price": 50,
+    "Country": "UK",
+    "is_searchable": 1,
+    "OnHand": 5
+  },
+  {
     "pID": 6,
     "Name": "Surface Dock 2",
     "Seller": "Microsoft",
@@ -9,15 +27,6 @@
     "OnHand": 34
   },
   {
-    "pID": 7,
-    "Name": "Xbox Wireless Headset",
-    "Seller": "Best Buy",
-    "Price": 100,
-    "Country": "US",
-    "is_searchable": 1,
-    "OnHand": 22
-  },
-  {
     "pID": 8,
     "Name": "Surface Keyboard",
     "Seller": "Amazon",
@@ -25,15 +34,6 @@
     "Country": "CA",
     "is_searchable": 1,
     "OnHand": 18
-  },
-  {
-    "pID": 9,
-    "Name": "USB-C Travel Hub",
-    "Seller": "Newegg",
-    "Price": 90,
-    "Country": "UK",
-    "is_searchable": 0,
-    "OnHand": 12
   },
   {
     "pID": 10,
