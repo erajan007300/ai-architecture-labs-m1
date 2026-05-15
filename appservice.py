@@ -5,7 +5,7 @@ import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
-from pidlookup_fn import product_id
+from pidlookup_fn import product_id, product_list
 from place_order_fn import place_order
 
 REQUEST_QUEUE = queue.Queue()
@@ -37,6 +37,37 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed_url = urlparse(self.path)
         path = parsed_url.path
+        if path == "/products":
+            query_params = parse_qs(parsed_url.query)
+            region_values = query_params.get("region")
+            if not region_values or not region_values[0]:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "invalid request: region value missing"}).encode())
+                return
+
+            region = region_values[0].lower()
+            if region not in ("us", "eu"):
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "Invalid region"}).encode())
+                return
+
+            filters = {
+                key: values[0]
+                for key, values in query_params.items()
+                if key != "region" and values
+            }
+            result = product_list(region, filters)
+
+            if "error" in result:
+                self.send_response(400)
+            else:
+                self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode())
+            return
+
         if not path.startswith("/product/"):
             self.send_response(404)
             self.end_headers()

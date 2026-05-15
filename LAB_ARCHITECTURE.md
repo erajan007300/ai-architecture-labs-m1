@@ -18,14 +18,16 @@ It is designed to teach distributed systems concepts: caching strategies, concur
 
 | File | Role | Key Responsibility |
 |------|------|-------------------|
-| **appservice.py** | HTTP Server | Main entry point. Runs ThreadPoolExecutor-style worker with request queue. Handles GET /product/{pid}, POST /place_order, and POST /clear_cache endpoints. Maintains in-memory cache and enriches inventory responses. |
-| **pidlookup_fn.py** | Data Access (Read) | Simulates database lookup. Returns product record by pID and region or None. Injects 100ms artificial latency via `time.sleep(0.1)`. Loads catalog_us.json or catalog_eu.json for each lookup. |
+| **appservice.py** | HTTP Server | Main entry point. Runs ThreadPoolExecutor-style worker with request queue. Handles GET /product/{pid}, GET /products, POST /place_order, and POST /clear_cache endpoints. Maintains in-memory cache and enriches inventory responses for single-product lookups. |
+| **pidlookup_fn.py** | Data Access (Read) | Simulates database lookup. Returns product record by pID and region or None. Injects 100ms artificial latency via `time.sleep(0.1)` for single-product lookup. Loads the pID shard for `/product/{pid}` and all regional shards for `/products`. |
 | **place_order_fn.py** | Data Access (Write) | Reduces OnHand inventory by qty. Supports region parameter to select catalog file (us/eu). Writes updated catalog back to JSON file. Handles non-numeric OnHand as error case. |
 | **replication_sync.py** | Replication Utility | Copies OnHand values from catalog_us.json to catalog_eu.json for matching pID values. No conflict resolution. |
 | **clientsimulator.py** | Test Client | Interactive CLI. Two workflows: (1) sequential product lookups with timing, (2) single order placement. Appends results to testoutput file. |
 | **simulation_config.py** | Configuration | Defines environment toggles: `PARTITION_ERROR` (unused), `INV_FAIL=True` (unused—intended to trigger inventory failures). |
-| **catalog_us.json** | Data Store | JSON array of 5 products (pID 1-5). US region catalog. Persistent storage for inventory state. |
-| **catalog_eu.json** | Data Store | JSON array of 5 products (pID 1-5). EU region catalog. Mirror of US with different OnHand values. |
+| **catalog_us.json** | Data Store | JSON array of odd-numbered US shard products. US region catalog. Persistent storage for inventory state. |
+| **catalog_us2.json** | Data Store | JSON array of even-numbered US shard products. Second US region catalog shard. |
+| **catalog_eu.json** | Data Store | JSON array of odd-numbered EU shard products. EU region catalog. |
+| **catalog_eu2.json** | Data Store | JSON array of even-numbered EU shard products. Second EU region catalog shard. |
 | **test.py** | Stub | Single-line comment placeholder for future tax calculation logic. Not yet integrated. |
 | **testoutput** | Results Log | Line-delimited JSON appended by appservice and clientsimulator. Logs product lookups and order operations with timestamps. |
 
@@ -61,6 +63,30 @@ appservice.do_GET() (resumed)
     ↓
 ClientSimulator
     └─ Append to testoutput with timestamp
+```
+
+### Product List Flow (GET /products?region={us|eu}[&attribute=value])
+```
+Client
+    ↓
+GET /products?region={us|eu}[&attribute=value]
+    ↓
+appservice.do_GET()
+    ├─ Require region query parameter
+    ├─ Validate region ∈ {us, eu}
+    ├─ Treat any remaining query parameters as exact-match product filters
+    ├─ Call product_list(region, filters)
+    ↓
+pidlookup_fn.product_list()
+    ├─ Find all catalog files matching catalog_{region}*.json
+    ├─ Load each regional shard
+    ├─ Validate requested filter attributes exist in the catalog
+    ├─ Return all products where every filter value matches exactly
+    ↓
+appservice.do_GET() (continued)
+    ├─ Return products, total_products, catalogs_searched, region, response_time_seconds
+    ├─ Return 400 invalid request: region value missing when region is omitted
+    └─ Return 400 invalid request: attribute not found for unknown product attributes
 ```
 
 ### Order Placement Flow (POST /place_order)
@@ -121,33 +147,41 @@ replication_sync.sync_onhand_us_to_eu()
 
 1. **Product Lookup with Caching**
    - First request for a product ID incurs 100ms latency
-   - `GET /product/{pid}?region=us` reads from catalog_us.json
-   - `GET /product/{pid}?region=eu` reads from catalog_eu.json
+   - `GET /product/{pid}?region=us` reads from the matching US shard
+   - `GET /product/{pid}?region=eu` reads from the matching EU shard
    - Requests without a region default to the US catalog
    - Subsequent requests served instantly from CACHE for the same region and product ID
    - `POST /clear_cache` clears all cached product lookup entries
    - Cache is per-appservice instance (no TTL, no eviction)
 
-2. **Inventory Status Computation**
+2. **Product List Lookup**
+   - `GET /products?region=us` scans all files matching `catalog_us*.json`
+   - `GET /products?region=eu` scans all files matching `catalog_eu*.json`
+   - `region` is required; missing region returns `invalid request: region value missing`
+   - Additional query parameters are exact-match product filters, such as `country=US`
+   - Unknown filter attributes return `invalid request: attribute not found`
+   - Response includes matching products, total count, catalogs searched, region, and response time
+
+3. **Inventory Status Computation**
    - OnHand > 0 → inventory_status = "InStock", purchase_allowed = True
    - OnHand = 0 → inventory_status = "OutofStock", purchase_allowed = False
    - OnHand = "ERROR" → inventory_status = "Inventory Unavailable", purchase_allowed = False + user message
    - OnHand < 0 → purchase_allowed = True (negative inventory allowed)
 
-3. **Regional Order Placement**
+4. **Regional Order Placement**
    - Route orders to US or EU catalog independently
    - Inventory reduced immediately and persisted to JSON file
 
-4. **One-Way Inventory Replication**
+5. **One-Way Inventory Replication**
    - `python3 replication_sync.py` copies OnHand values from catalog_us.json to catalog_eu.json for matching pID values
    - EU product metadata remains unchanged; only OnHand is overwritten
    - No conflict resolution, merge policy, or order placement changes
 
-5. **Concurrent Request Handling**
+6. **Concurrent Request Handling**
    - Worker thread processes product lookups asynchronously
    - Multiple GET requests can queue and are served sequentially by single worker
 
-6. **Result Logging**
+7. **Result Logging**
    - All operations (product fetch, order place) logged to testoutput with timestamp
    - JSON format for programmatic analysis
 
@@ -191,6 +225,19 @@ These flags are placeholders for future enhancement—configuration is parsed bu
 }
 ```
 
+### Product List Response
+```json
+{
+  "products": [
+    { /* product record */ }
+  ],
+  "total_products": <int>,
+  "catalogs_searched": ["catalog_us.json", "catalog_us2.json"],
+  "region": "us" | "eu",
+  "response_time_seconds": <float>
+}
+```
+
 ### Order Request Payload
 ```json
 {
@@ -220,7 +267,7 @@ These flags are placeholders for future enhancement—configuration is parsed bu
 1. **Database Latency**: 100ms artificial sleep in pidlookup_fn before each cache miss
 2. **Inventory Depletion**: OnHand decremented by order qty; can go negative (overselling)
 3. **System Failure Mode**: OnHand = "ERROR" string triggers inventory unavailability response
-4. **Multi-Tenant Isolation**: US and EU catalogs maintained separately; product lookups and orders routed by region
+4. **Multi-Tenant Isolation**: US and EU catalogs maintained separately; product lookups, product lists, and orders routed by region
 5. **Eventual Consistency**: Order writes sync to disk immediately (no staged commits)
 6. **Client-Side Timing**: clientsimulator records elapsed time for request batches
 7. **Request Queuing**: Multiple concurrent GET requests queue and serialize through worker thread
@@ -246,7 +293,7 @@ These flags are placeholders for future enhancement—configuration is parsed bu
 
 ### Experimental / Unfinished
 - **test.py**: Single-line comment about tax calculation. Not integrated into order flow.
-- **is_searchable Field**: Defined in catalog but never consulted. No search endpoint exists.
+- **is_searchable Field**: Available as an exact-match `/products` filter, but no dedicated search ranking or partial-match behavior exists.
 
 ---
 
@@ -266,9 +313,9 @@ These flags are placeholders for future enhancement—configuration is parsed bu
    - Wrap order placement in try/except with file backup
    - Demonstrate rollback on failure
 
-4. **Search Endpoint**
-   - Use is_searchable field to filter products
-   - Support filtering by Country, Seller, or price range
+4. **Search Enhancements**
+   - Add partial-match or ranked search behavior
+   - Support range filters such as price ranges
    - Teach query optimization
 
 ### Distributed Systems Topics
